@@ -15,3 +15,15 @@ def wait_for_user_confirmation():
     user_input = input("Do you want to proceed? (yes/no): ").strip().lower()
     return user_input in {"yes", "y"}
 
+def is_iterable(obj):
+    if isinstance(obj, (str, bytes)):  # Exclude strings and bytes
+        return False
+    try:
+        iterator = iter(obj)  # Check if obj can be iterated over
+        first_item = next(iterator)  # Try getting the first item
+        second_item = next(iterator, None)  # Try getting a second item
+        return second_item is not None  # If there's no second item, return False
+    except TypeError:
+        return False
+    except StopIteration:  
+        return False  # If the iterable is empty, return False
