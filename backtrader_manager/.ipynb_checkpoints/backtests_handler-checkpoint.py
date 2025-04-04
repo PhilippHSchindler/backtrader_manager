@@ -21,7 +21,7 @@ import math
 import numbers
 import quantstats_lumi as qs
 
-from .utils import wait_for_user_confirmation, is_iterable, print_headline, _format_parameters
+from .utils import wait_for_user_confirmation, is_iterable, print_headline
 from .analyzers import AnalyzerCollection
 
 class Backtest():
@@ -38,14 +38,14 @@ class Backtest():
     
     
     '''
-    class_alias = 'Backtest'
-    
+        
     def __init__(self, input_backtest, pandas_datas=None, mode='default'):  
         print_headline('Initialising Backtest', level=2)
                
-        ### variables that may be different for each new backtest instance
+        ### settings that may be variable for each new backtest instance
         self.mode = mode
         self.input_backtest = input_backtest
+       
         ### fixed settings for all class instances
         
         # backtest class settings
@@ -70,22 +70,13 @@ class Backtest():
             
         ### result and metrics of backtest
         self.result = None # cerebro result object
-        self.result_path = None  # Will store the path to the saved result
 
-
+        self.run_numbers = None
         self.meta = None
         self.metrics = None
         self.parameters = None
+        
           
-    @property
-    def idx(self):
-        if self.meta:
-            idx = (self.meta[0]['idx'][0], None)
-        else: 
-            idx = None
-        return idx
-    
-    
     # Functions to be defined in child classes(mandatory):
 
     def _set_strategy_class(self):
@@ -140,26 +131,6 @@ class Backtest():
         return None
     
     # Functions that shouldn't be changed in child classes
-   
-    def save_result_to_disk(self, base_path):
-        """Save backtest result to disk in the 'pkl' subdirectory."""
-        if self.result is not None:
-            # Save the result to the 'pkl' subdirectory within the base path
-            file_name = f"result_idx=({self.idx[0]},).pkl"
-            self.result_path = os.path.join(base_path, 'pkl', file_name)
-            os.makedirs(os.path.dirname(self.result_path), exist_ok=True)
-            
-            with open(self.result_path, 'wb') as f:
-                pickle.dump(self.result, f)
-            
-            self.result = None  # Free up memory after saving
-
-    def load_result_from_disk(self):
-        """Load backtest result from disk."""
-        if hasattr(self, 'result_path') and os.path.exists(self.result_path):
-            with open(self.result_path, 'rb') as f:
-                self.result = pickle.load(f)
-                
     def get_parameter_max(self, key):
         parameter_max = max(self.input_backtest.strategy_parameters.get(key))
         return parameter_max
@@ -182,17 +153,16 @@ class Backtest():
             return self.result
         return None
     
-    def _get_input_id(self):
-        input_id = self.input_backtest.input_id
-        return input_id        
+    def _get_idx(self):
+        idx = self.input_backtest.idx
+        return idx        
             
     def get_analysis(self, analyzer_name, run_number, strat_number=0):
-        if self._check_if_optimisation():
-            result = self.result[run_number][strat_number]
-        else:
-            result = self.result[strat_number]
-            
-        return self.analyzer_collection.get_analysis(analyzer_name, result)
+        cerebro = self.cerebro
+        runstrats = cerebro.runstrats 
+        optreturn = runstrats[run_number][strat_number]                 
+    
+        return self.analyzer_collection.get_analysis(analyzer_name, optreturn)
     
     def count_combinations(self):
         # Prepare the values for itertools.product
@@ -270,9 +240,8 @@ class Backtest():
             self.cerebro.adddata(datafeed, name=ticker)
         print(f'Added all datafeeds')   
     
-    def _clear(self, result=False):
-        if result:
-            self.result = None
+    def _clear(self):
+        self.result = None
         self.cerebro = None
 
     def _cerebro_add_analyzers(self):    
@@ -310,6 +279,7 @@ class Backtest():
     def _unpack_runs(self):
         input_backtest = self.input_backtest
 
+        run_numbers = []
         meta = []
         metrics = []
         parameters = []
@@ -322,29 +292,34 @@ class Backtest():
             runs = [self.result]           
         
         for i, run in enumerate(runs):
-            
-            parameters_of_run = {**vars(run[0].params)}
-            parameters.append(parameters_of_run)
+            run_number_of_run = {}
+            run_number_of_run['run_number'] = i
+            run_numbers.append(run_number_of_run)
             
             meta_of_run = {}
+            meta_of_run['id'] = self._calc_id() #unique id for the combination
             meta_of_run['input_collection_name'] = input_backtest.input_collection_name
             meta_of_run['period_key'] = input_backtest.period_key 
             meta_of_run['iteration_key'] = input_backtest.iteration_key 
             meta_of_run['period'] = input_backtest.period
-            meta_of_run['backtest_class'] = input_backtest.backtest_class.class_alias
-            #meta_of_run['commission'] = input_backtest.commission
-            #meta_of_run['slippage'] = input_backtest.slippage
+            meta_of_run['backtest_class'] = input_backtest.backtest_class
             meta.append(meta_of_run)
             
             metrics_of_run = {}
             metrics_of_run.update(self.analyzer_collection.get_outputs(run[0]))
             metrics.append(metrics_of_run)
 
-            
-            
-            self.meta = meta
-            self.metrics = metrics 
-            self.parameters = parameters
+            parameters_of_run = {**vars(run[0].params)}
+            parameters_of_run['commission'] = input_backtest.commission
+            parameters_of_run['slippage'] = input_backtest.slippage
+            parameters.append(parameters_of_run)
+    
+        self.meta = meta
+        self.metrics = metrics 
+        self.parameters = parameters
+    
+    def _calc_id(self):
+        return 0
     
     def _deactivate_plots(self):
         cerebro = self.cerebro
@@ -433,27 +408,16 @@ class BacktestCollection():
         print_headline('Initialising Backtest Collection', level=1)  
         
         ### settings that may be variable for each new instance        
-        
-        self.name = name
+        self.path = name + '.pkl'
         self.train_test_periods = None # every backtest input collection that is added must have the same train_test_periods
-
-        # Main directory for the collection
-        self.base_dir = os.path.join('results', self.name)
-        self.pkl_dir = os.path.join(self.base_dir, 'pkl')  # Directory to store both collection and result files
-        self.reports_dir = os.path.join(self.base_dir, 'reports') # Directory to store reports
-        
-        # Path for the collection file
-        self.path = os.path.join(self.pkl_dir, 'collection.pkl')  
-        
         
         ### fixed settings for all class instances
         self.csv_data_path = csv_data_path
         self.pandas_datas = self._load_csv_datas() # {ticker: data_ticker.csv}
-        self.benchmark_class = None
-        
-        self.backtest_input_collections = [] 
+
+        self.backtest_input_collections = []
         self.backtests_new = []
-        self.backtests_completed = [] #  
+        self.backtests_completed = [None] #  0 is reserved for benchmark backtest
         self.backtests_temp = [] # only temporary backtests, not saved to disk
         self.backtests_temp_map = {}
 
@@ -461,19 +425,11 @@ class BacktestCollection():
         self.meta = []
         self.metrics = []
         self.parameters = []
-
-        # track/map unique combinations in self.parameters to parameter_id
-        self.current_id = {}
-        self.param_to_id = {}  # param_tuple -> parameter_id
-        self.id_to_param = {}  # parameter_id -> param_tuple
-            
+        
         if name != 'Backtests_Temp':
             self._load()
         self.summary = None
 
-    def set_benchmark_class(self, benchmark_class):
-        self.benchmark_class = benchmark_class
-    
     def _load_csv_datas(self):
         pandas_datas = {}
         csv_data_path = self.csv_data_path
@@ -518,7 +474,7 @@ class BacktestCollection():
         backtest_input._set_parent_idx(idx) #this tracks the class_backtest_run tuple from the original source 
         return [backtest_input]
     
-    def get_backtest(self, idx):
+    def get_backtest(self, idx: tuple[int, int]):
         if idx in self.backtests_temp_map.keys():
             idx = self.backtests_temp_map[idx]
             backtest = self.backtests_temp[idx[0]]
@@ -530,160 +486,62 @@ class BacktestCollection():
         backtest, idx_backtest = self.get_backtest(idx)
         return backtest.get_analysis(analyzer_name, idx_backtest[1], strat_number)
 
-    
-
-    def summary_filter_by(self, input_collection_name=None, period_key=None, iteration_key=None,
-                       backtest_class=None, idx=None, parameter_id=None):
-        summary = self.summary.copy()  # Avoid modifying original DataFrame
+    def get_reports(self, idx):
+        backtest, idx_backtest = self.get_backtest(idx)
+        benchmark, idx_benchmark = self.get_backtest((0, 0))
+                   
+        returns_backtest = backtest.get_analysis('time_return', idx_backtest[1])
+        returns_backtest =  pd.Series(returns_backtest)
+        returns_backtest.name = backtest.name 
         
-        # Apply filters dynamically
-        filters = {
-            "input_collection_name": input_collection_name,
-            "period_key": period_key,
-            "iteration_key": iteration_key,
-            "backtest_class": backtest_class,
-            "idx": idx,
-            "parameter_id": parameter_id
-        }
-        
-        for col, value in filters.items():
-            if value is not None:
-                summary = summary[summary[col] == value]  # Apply filter
-    
-        return summary  # Return the filtered DataFrame
-
-   
-    def get_benchmark_idx(self, idx):
-        summary = self.summary
-        mask = summary['idx'] == idx
-        filtered_row = summary.loc[mask]
-    
-        if filtered_row.empty:
-            return None  # Return None if no matching row is found
-        
-        # Get all column names except 'backtest_class' and 'idx'
-        columns_to_match = ['input_collection_name', 'period_key', 'iteration_key']
-        
-        # Create mask for rows with same values in all columns except 'backtest_class'
-        match_mask = (summary[columns_to_match] == filtered_row[columns_to_match].values[0]).all(axis=1)
-        benchmark_class_mask = (summary['backtest_class'] == self.benchmark_class)
-        idx_benchmark_series =summary.loc[match_mask & benchmark_class_mask]['idx']
-        # Return filtered DataFrame with benchmark runs
-        return idx_benchmark_series.item() if not idx_benchmark_series.empty else None
-            
-    
-    def get_report(self, idx=None, summary_filtered=None):
-        """Generate and store performance reports for given backtest indices.
-        
-        Args:
-            idx (int or list): Single index or list of indices for reports.
-            summary_filtered (pd.DataFrame, optional): Filtered DataFrame with 'idx' column. 
-        """
-        summary = self.summary
-        # Determine indices to process
-        if summary_filtered is not None:
-            idx_list = summary_filtered['idx'].tolist()
+        if benchmark:
+            returns_benchmark = benchmark.get_analysis('time_return', 0)
+            returns_benchmark =  pd.Series(returns_benchmark)
+            returns_benchmark.name = benchmark.name 
         else:
-            idx_list = [idx] if isinstance(idx, tuple) else idx  # Ensure list format
+            returns_benchmark = None
         
-        # Iterate over all indices
-        for idx in idx_list:
-            mask = (summary['idx']==idx)
-            summary_idx = summary[mask]
-            if summary_idx.empty:
-                print(f"No entry found in summary for idx: {idx}")
-                return
-            
-            backtest, idx_backtest = self.get_backtest(idx) 
-            idx_benchmark = self.get_benchmark_idx(idx)
-            
-            if idx_benchmark is not None:  # Only fetch benchmark if it exists
-                benchmark, idx_benchmark = self.get_backtest(idx_benchmark)
-            else:
-                benchmark = None  # No benchmark found
-            
-            # Retrieve return series
-            returns_backtest = pd.Series(backtest.get_analysis('time_return', idx_backtest[1]), name=backtest.name)
-            
-            if benchmark:
-                returns_benchmark = pd.Series(benchmark.get_analysis('time_return', idx_benchmark[1]), name=benchmark.name)
-            else:
-                returns_benchmark = None
-            
-            # Prepare directory structure
-            
-            input_collection_name = summary_idx['input_collection_name'].iloc[0]
-            period_key = summary_idx['period_key'].iloc[0]
-            backtest_class = summary_idx['backtest_class'].iloc[0]
-            parameter_id = summary_idx['parameter_id'].iloc[0]
-            iteration_key = summary_idx['iteration_key'].iloc[0]
-            
-            folder_path = os.path.join(self.reports_dir, input_collection_name)
-            os.makedirs(folder_path, exist_ok=True)  # Create directory if it doesn't exist
-            
-            # File name format: period_key_backtest_class_parameter_id_iteration_key_idx.html
-            file_name = f"{backtest_class}_parameter-id={parameter_id}_{period_key}_iteration={iteration_key}_idx={idx}.html"
-            file_path = os.path.join(folder_path, file_name)
-    
-            # Generate report
-            qs.extend_pandas()
-            qs.reports.html(returns_backtest, returns_benchmark, output=file_path)
-            
-    
-    def offload_all_results(self):
-        """Save all backtest results to disk."""
-        for backtest in self.backtests_completed:
-            backtest.save_result_to_disk(self.base_dir)  # Use the base directory to store results
-
-    def load_all_results(self):
-        """Load all backtest results from disk."""
-        for backtest in self.backtests_completed:
-            backtest.load_result_from_disk()
-
-    def _load(self):
-        """Load the BacktestCollection instance from file."""
-        loaded_data = self._load_pkl(self.path)
-        if loaded_data:
-            self.__dict__.update(loaded_data.__dict__)
-            print(f"✅ Loaded collection from {self.path}")
-        else:
-            print(f"⚠️ No saved collection found at {self.path}, starting new.")
-
-    def _save(self):
-        """Save the BacktestCollection to file, offload results, and clear unnecessary data."""
-        # Offload all results to disk first
-        self.offload_all_results()
+        qs.extend_pandas()
         
-        # Deepcopy to avoid changing original during save
-        copy_self = copy.deepcopy(self)
-        copy_self.backtests_temp = []  # Ensure temp backtests are not saved
+        path = self.path.split(".")[0]
+        file_name = f'{path}_{str(idx)}.html'
+        qs.reports.html(returns_backtest, returns_benchmark, output=file_name)
         
-        # Clear backtests (for memory management)
-        self._clear(backtests=copy_self.backtests_completed, range_to=0)  # Clears all cerebro instances since they aren't pickable
-        
-        # Save the collection to disk
-        copy_self._save_pkl()
-
     def _load_pkl(self, path):
-        """Load data from the given path. Returns the loaded data if found, or None if not found."""
         if os.path.exists(path):
             with open(path, 'rb') as f:
-                return pickle.load(f)
-        else:
-            print(f"No file found at {path} on harddrive.")
-            return None
-
+                file = pickle.load(f)
+                return file
+        print(f'\nNo file found for {path} on harddrive')        
+        return None
+    
     def _save_pkl(self):
-        """Save the collection object to disk in the 'pkl' subdirectory."""
-        os.makedirs(self.pkl_dir, exist_ok=True)  # Ensure 'pkl' subdirectory exists
-        print(f"Saving BacktestCollection to {self.path}")
+        print(f"Saving object to {self.path}: {self}")
         with open(self.path, 'wb') as f:
             pickle.dump(self, f)
-        print(f"✅ Saved collection to {self.path}")
+        print(f'\nSaved file {self.path} to harddrive')
+            
+        
+    
+    def _load(self):
+        """Load the current class instance from pickle file or create a new one."""
+        loaded_data = self._load_pkl(self.path)
+        if loaded_data is not None:
+            self.__dict__.update(loaded_data.__dict__)  # Update the current instance with the loaded data
+            print(f"Loaded {self.path} backtest collection successfully")
+        else:
+            print(f"No saved backtest collection found, initialised new instance")
 
-
-    def _clear(self, backtests=None, range_to=-2, result=False):
-        """Deletes backtrader cerebro/result objects in all backtest instances up to the specified range, in order to save RAM"""
+    
+    def _save(self, clear=True):
+        copy_self = copy.deepcopy(self)
+        copy_self.backtests_tmep = []
+        if clear:
+            self._clear(backtests=copy_self.backtests_completed, range_to=0)
+        copy_self._save_pkl()
+    
+    def _clear(self, backtests=None, range_to=-2):
+        """Clears all backtests up to the specified range"""
         if not backtests:
             backtests = self.backtests_completed
 
@@ -691,36 +549,18 @@ class BacktestCollection():
         limit = max(0, len(backtests) + range_to)
         for i in range(limit):
             if backtests[i]:
-                backtests[i]._clear(result=result)
+                backtests[i]._clear()
         
     def clear_backtests_temp(self):
         self.backtests_temp = []
         self.backtests_temp_map = {}
-
-    def get_input_collection(self, input_collection_name):
         
-        input_collection = next((input_collection for input_collection in self.input_collections if input_collection.name == input_collection_name), None)
-        
-        if input_collection:
-            return input_collection
-        else:
-            print("input_collection not found")
-
     def add_backtest_input_collection(self, backtest_input_collection):
-        if any(backtest_input_collection.name==existing_collection.name for existing_collection in self.backtest_input_collections):
-            print(f'An backtest_input_collection with same name allready has been added')
-            return
+        if backtest_input_collection not in self.backtest_input_collections:
+            self.backtest_input_collections.append(backtest_input_collection)
+        else:
+            print('the backtest_input_collection has been allready added in the past')
             
-        self.backtest_input_collections.append(backtest_input_collection)
-        backtest_class = backtest_input_collection.backtest_class.class_alias
-        if backtest_class not in self.id_to_param:
-            self.param_to_id[backtest_class] = {}  # param_tuple -> parameter_id
-            self.id_to_param[backtest_class] = {}  # parameter_id -> param_tuple
-            self.current_id[backtest_class] = 1
-    
-        id_to_param = self.id_to_param[backtest_class]
-        backtest_input_collection._set_parameter_mapping(id_to_param)
-        
     def create_new_backtests(self, backtest_input_collection, mode='default'):
         if backtest_input_collection not in self.backtest_input_collections:
             print('First add_backtest_input_collection to backtest_collection instance')
@@ -734,27 +574,27 @@ class BacktestCollection():
         for i, backtest_input in enumerate(backtest_inputs):
             new = True
             
-            if backtest_input._parent_input_id:
+            if backtest_input._parent_idx:
                 copy = True
             else:
                 copy = False
                 
-            backtest_input_id = backtest_input.input_id
+            backtest_id = backtest_input.idx
             backtest_class = backtest_input.backtest_class
                         
             # Check if new parameters are allready in backtests_completed
             if backtests_completed and len(backtests_completed) > 1 and copy==False:
                 for backtest_completed in backtests_completed:
-                    if backtest_completed._get_input_id() == backtest_input_id:
+                    if backtest_completed._get_idx() == backtest_id:
                         new = False
-                        print(f'Backtest with input_id {backtest_input_id} allready in backtests_completed list')
+                        print(f'Backtest with id {backtest_id} allready in backtests_completed list')
                         
             # Check if new parameters are allready in backtests_new
             if backtests_new:
                 for backtest_new in backtests_new:
-                    if backtest_new._get_input_id == backtest_input_id:
+                    if backtest_new._get_idx == backtest_id:
                         new = False
-                        print(f'Backtest with input_id {backtest_input_id} allready in backtests_new list')
+                        print(f'Backtest with ID {backtest_id} allready in backtests_new list')
             
             if new:                    
                 backtest = backtest_class(backtest_input, pandas_datas=self.pandas_datas, mode=mode)
@@ -762,8 +602,6 @@ class BacktestCollection():
                 print(f'Added backtest {i+1} to backtests_new, mode: {mode}')
                 backtest_input_collection.clear_backtest_inputs()
 
-    
-    
     def count_combinations(self):
         combinations = 0
         for backtest in self.backtests_new:
@@ -798,54 +636,35 @@ class BacktestCollection():
         
         self._save()  
 
+    
+
     def _add_backtest_completed(self, backtest):
         
-        backtest_parent_input_id = backtest.input_backtest._parent_input_id
-        if backtest_parent_input_id:
-            self.backtests_temp_map[backtest_parent_input_id] = (len(self.backtests_temp), 0)
+        backtest_parent_idx = backtest.input_backtest._parent_idx
+        if backtest_parent_idx:
+            self.backtests_temp_map[backtest_parent_idx] = (len(self.backtests_temp), 0)
             self.backtests_temp.append(backtest)
             return          
         
         backtests_completed = self.backtests_completed
-            
-        backtest_index = len(backtests_completed)
-
-        # add column 'idx' to backtest.meta
-        for run_index, meta_dict in enumerate(backtest.meta):
-            meta_dict['idx']= (backtest_index, run_index)
-            
-        backtests_completed.append(backtest)
+        benchmark = backtest.input_backtest.benchmark    
+       
+        if benchmark:
+            backtest_index = 0
+        else:         
+            backtest_index = len(backtests_completed)
         
-        backtest = self._add_parameter_id(backtest)
+        for run_index, meta_dict in enumerate(backtest.meta):
+            meta_dict['id']= (backtest_index, run_index)
+            
+        if benchmark:
+            backtests_completed[0] = backtest
+        else:          
+            backtests_completed.append(backtest)
+        
         self.meta += backtest.meta
         self.metrics += backtest.metrics
         self.parameters += backtest.parameters
-        
-    def _add_parameter_id(self, backtest):
-        backtest_class = backtest.input_backtest.backtest_class.class_alias
-    
-        # Initialize dictionaries if not present
-        if backtest_class not in self.param_to_id:
-            self.param_to_id[backtest_class] = {}  # param_tuple -> parameter_id
-            self.id_to_param[backtest_class] = {}  # parameter_id -> param_tuple
-            self.current_id[backtest_class] = 1
-    
-        for i, parameters_of_run in enumerate(backtest.parameters):
-            # Convert dictionary to a tuple (hashable) for comparison
-            param_tuple = tuple(sorted(parameters_of_run.items()))
-    
-            # Check if this combination already exists
-            if param_tuple in self.param_to_id[backtest_class]:
-                parameter_id = self.param_to_id[backtest_class][param_tuple]
-            else:
-                parameter_id = self.current_id[backtest_class]
-                self.param_to_id[backtest_class][param_tuple] = parameter_id
-                self.id_to_param[backtest_class][parameter_id] = _format_parameters(parameters_of_run) # store parameters in original dict format
-                self.current_id[backtest_class] += 1  # Increment for next new set
-    
-            backtest.meta[i]['parameter_id'] = parameter_id  
-
-        return backtest
 
     def plot_equity_curve(self, *backtest_run_tuples, strat_number=0):
         runs_list = list(backtest_run_tuples)
@@ -871,5 +690,6 @@ class BacktestCollection():
             
     def plot(self, backtest_run_tuple, ticker=None, start=None , end=None, style='candlestick'):
         self.backtests_completed[backtest_run_tuple[0]].plot(ticker, start, end, style)
-
         
+        
+            

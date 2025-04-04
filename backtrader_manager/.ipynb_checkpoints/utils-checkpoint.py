@@ -27,17 +27,3 @@ def is_iterable(obj):
         return False
     except StopIteration:  
         return False  # If the iterable is empty, return False
-
-def _format_parameters(parameters):
-        parameters_formatted = {}
-    
-        for key, parameter in parameters.items():
-            key_lower = key.lower()
-    
-            # Handle different types of parameter values
-            if isinstance(parameter, (list, tuple, set)):
-                parameters_formatted[key_lower]= parameter  # Ensure it's a list
-            else:
-                parameters_formatted[key_lower] = [parameter]  # Wrap single value in a list
-    
-        return parameters_formatted
