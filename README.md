@@ -48,9 +48,10 @@ It handles walk-forward optimization, parameter tracking, and benchmark comparis
 
 clone and install in editable mode for development:
 
-git clone https://github.com/PhilippHSchindler/backtrader_manager.
-cd backtrader_manager.
-pip install -e.
+```bash
+git clone https://github.com/PhilippHSchindler/backtrader_manager
+cd backtrader_manager
+pip install -e 
 
 ---
 
