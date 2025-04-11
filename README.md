@@ -52,6 +52,7 @@ clone and install in editable mode for development:
 git clone https://github.com/PhilippHSchindler/backtrader_manager
 cd backtrader_manager
 pip install -e 
+```
 
 ---
 
