@@ -1,0 +1,30 @@
+# intallation metadata for the package
+backtrader_manager.egg-info/
+
+# Ignore Python bytecode files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore .ipynb_checkpoints folder
+.ipynb_checkpoints/
+
+# Ignore virtual environment directories
+venv/
+.env/
+
+# Ignore IDE files (VSCode, PyCharm, etc.)
+.vscode/
+.idea/
+
+# Ignore logs
+*.log
+
+# Ignore temporary files
+*~
+ 
+# Ignore all pkl files in any directory
+*.pkl
+
+# Ignore only subdirectories in samples/BitcoinStrategy, but keep the files
+samples/BitcoinStrategy/*/
