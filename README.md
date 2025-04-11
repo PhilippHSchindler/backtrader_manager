@@ -48,13 +48,14 @@ It handles walk-forward optimization, parameter tracking, and benchmark comparis
 
 clone and install in editable mode for development:
 
-git clone https://github.com/<your-username>/backtrader_manager.git
-cd backtrader_manager
-pip install -e .
+git clone https://github.com/PhilippHSchindler/backtrader_manager.
+cd backtrader_manager.
+pip install -e.
 
 ---
 
 ## 🚀 Quickstart / Usage Example
+
 
 👉 [Check out the example notebook](samples/BitcoinStrategies/walk-forward-optimisation.ipynb) for walk-forward optimisations of Bitcoin strategies
 
