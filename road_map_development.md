@@ -2,9 +2,20 @@
 
 This document outlines planned improvements and features for the project. I am focused on making the backtesting framework more robust, flexible, and user-friendly.
 
+## 0. Rename classes:
+Shorter more memorizable names, fitting to core responsibilities of class
+
+BacktestInputCollection: InputOutlet, InputFactory, InputGenerator
+BacktestInput: BtInput, BtInput, InputBt
+BacktestCollection: BacktestHub, BTHub, BacktestManager
+Backtest: OK
+
 ## 0. Docstrings
 
 ## 0. Error handling
+
+## 0. DeepCopy inputs / input collection
+- Usage: run identical backtests with different commission/slipagge settings
 
 ## 1. Unit Testing
 - **Implement Comprehensive Unit Tests**
