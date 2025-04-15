@@ -67,9 +67,9 @@ pip install -e
 
 some screenshots:
 
-<img src="./images/walk-forward-periods_example-1.jpg" style="width:50%; border:1px solid #ddd;" alt="Description">
+<img src="./images/walk-forward-periods_example-1.JPG" style="width:50%; border:1px solid #ddd;" alt="Description">
 
-<img src="./images/summary_in_groups_example-1.jpg" style="width:50%; border:1px solid #ddd;" alt="Description">
+<img src="./images/summary_in_groups_example-1.JPG" style="width:50%; border:1px solid #ddd;" alt="Description">
 
 ---
 
