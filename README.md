@@ -1,6 +1,10 @@
 # 🧠 backtrader_manager
+Manage large-scale otimizations using Backtrader, including walk-forward optimization  
 
-Backtest orchestration framework for Backtrader, including walk-forward optimization and parameter tracking.
+[![Email](https://img.shields.io/badge/Email-Contact-D14836?logo=gmail)](mailto:Philipp.H.Schindler@gmail.com)  
+
+## 📊 GitHub Discussions  
+**Have questions or ideas?** Join the conversation in our [Discussions](https://github.com/PhilippHSchindler/backtrader_manager) section!  
 
 ---
 
@@ -59,7 +63,13 @@ pip install -e
 ## 🚀 Quickstart / Usage Example
 
 
-👉 [Check out the example notebook](samples/BitcoinStrategies/walk-forward-optimisation.ipynb) for walk-forward optimisations of Bitcoin strategies
+👉 [Check out the quickstart guide notebook](samples/BitcoinStrategies/quickstart_guide.ipynb) 
+
+some screenshots:
+
+<img src="./images/walk-forward-periods_example-1.jpg" style="width:50%; border:1px solid #ddd;" alt="Description">
+
+<img src="./images/summary_in_groups_example-1.jpg" style="width:50%; border:1px solid #ddd;" alt="Description">
 
 ---
 

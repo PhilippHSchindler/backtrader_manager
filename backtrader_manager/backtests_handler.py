@@ -15,8 +15,6 @@ from collections.abc import Iterable
 import pickle
 import itertools
 import copy
-#from collections import OrderedDict
-#import numbers
 import quantstats_lumi as qs
 
 from .utils import wait_for_user_confirmation, is_iterable, print_headline, _format_parameters
@@ -32,7 +30,7 @@ class Backtest():
     - analyzers
     - observers
     All functions containing pass are to be defined in subclass
-    Some are mandatory, some are optional
+    Some are mandatory, some are optional, see comments 
     '''
     class_alias = 'short_name_for_backtest_class'
     
@@ -101,6 +99,7 @@ class Backtest():
     # -------------------------------------
         
     def _set_strategy_class(self):
+        '''Returns the backtrader startegy class, must be overriden in subclass.'''
         strategy_class = None
         return strategy_class
 
@@ -109,6 +108,8 @@ class Backtest():
     # Subclass hook methods (optional override, elese standard values)
     # ---------------------------------------------------------------- 
         
+    # backtrader specific settings
+    
     def _set_cash(self):
         cash_standard = 10000
         return cash_standard         
@@ -120,9 +121,11 @@ class Backtest():
         return 0
           
     def _set_coc(self):
+        '''Sets cheat on close.'''
         return False
            
     def _set_warmup_bars(self):
+        '''Sets the number of warmup bars for indicators that have a lag-'''
         warmup_bars = 0
         return warmup_bars
 
@@ -164,7 +167,7 @@ class Backtest():
         position_start_date = data.index.get_loc(self.input_backtest.period[0])
         position_buffer_start_date = position_start_date - max_lag
         buffer_start_date = data.index[position_buffer_start_date]
-        print(buffer_start_date)
+        
         return buffer_start_date       
     
     def _set_mode(self, mode):
@@ -325,15 +328,11 @@ class Backtest():
             meta_of_run['iteration_key'] = input_backtest.iteration_key 
             meta_of_run['period'] = input_backtest.period
             meta_of_run['backtest_class'] = input_backtest.backtest_class.class_alias
-            #meta_of_run['commission'] = input_backtest.commission
-            #meta_of_run['slippage'] = input_backtest.slippage
             meta.append(meta_of_run)
             
             metrics_of_run = {}
             metrics_of_run.update(self._analyzer_collection.get_outputs(run[0]))
             metrics.append(metrics_of_run)
-
-            
             
             self._meta = meta
             self._metrics = metrics 
@@ -357,9 +356,6 @@ class Backtest():
         data.plotinfo.plot = True    
         # Set the selected data feed as the plot master so that observers use it
         data.plotinfo.plotmaster = data
-            
-        
-        
     
     def _deactivate_observers(self):
         # Check if optimization mode
@@ -371,8 +367,7 @@ class Backtest():
             for strat in optreturn:  # Each `strat` is an instance of the strategy
                 for observer in strat.observers:
                     observer.plotinfo.plot = False     
-        
-    
+         
     def _activate_observer_plot(self, observer_class):
         cerebro = self.cerebro
         
@@ -422,6 +417,37 @@ class Backtest():
          
 class BacktestCollection():
     
+    """
+    Central orchestrator of the framework and exclusive datafeed provider.
+    Serves as the interface to search, evaluate, and compare backtest results through
+    the unified `summary` DataFrame.
+
+    Core Responsibilities:
+    1. **Datafeed Management**
+       - Loads/maintains all market data (CSVs → ticker→DataFrame dict)
+       - Ensures consistent data across all backtests
+    2. **Backtest Coordination**
+       - Creates/runs backtests from inputs (via `BacktestInputCollection`)
+       - Organizes backtest instances into new/completed/temporary categories
+    3. **Results Interface**
+       - Maintains `summary` DataFrame (central hub for viewing meta data, metrics and parameters)
+       - Enables filtering, ranking, and comparison of backtest runs
+       - Generates reports/plots from stored results
+
+    Key Attributes:
+        summary : pd.DataFrame
+            Unified results table with metrics (CAGR, Sharpe, etc.), parameters, 
+            and metadata. Primary interface for analysis.
+        datas : Dict[str, pd.DataFrame]
+            Raw market data (ticker→OHLCV mappings)
+        backtests_completed : List[Backtest]
+            Executed backtests with stored results
+
+    Delegates:
+        - Backtest configuration → `BacktestInputCollection`
+        - Metric calculations → Individual backtest classes
+    """
+    
     def __init__(self, csv_datas_path, name = 'Backtests_Temp'):
         print_headline('Initialising Backtest Collection', level=1)  
         
@@ -460,7 +486,6 @@ class BacktestCollection():
             self._load()
             self.summarize()
         
-
     ### Puplic methods
     
     def add_backtest_input_collection(self, backtest_input_collection):
@@ -470,11 +495,12 @@ class BacktestCollection():
             
         self._backtest_input_collections.append(backtest_input_collection)
         backtest_input_collection._set_datas(self._datas)
-        backtest_class = backtest_input_collection.backtest_class.class_alias
-        if backtest_class not in self._id_to_param:
-            self._param_to_id[backtest_class] = {}  # param_tuple -> parameter_id
-            self._id_to_param[backtest_class] = {}  # parameter_id -> param_tuple
-            self._current_id[backtest_class] = 1
+        if backtest_input_collection.backtest_class:
+            backtest_class_alias = backtest_input_collection.backtest_class.class_alias
+            if backtest_class_alias not in self._id_to_param:
+                self._param_to_id[backtest_class_alias] = {}  # param_tuple -> parameter_id
+                self._id_to_param[backtest_class_alias] = {}  # parameter_id -> param_tuple
+                self._current_id[backtest_class_alias] = 1
     
         id_to_param = self._id_to_param
         backtest_input_collection._set_parameter_mapping(id_to_param)
@@ -492,18 +518,12 @@ class BacktestCollection():
         print_headline('Creating new backtests', level=1)
 
         for i, backtest_input in enumerate(backtest_inputs):
-            new = True
-            
-            if backtest_input._parent_input_id:
-                copy = True
-            else:
-                copy = False
-                
+            new = True                
             backtest_input_id = backtest_input.input_id
             backtest_class = backtest_input.backtest_class
                         
             # Check if new parameters are allready in backtests_completed
-            if backtests_completed and len(backtests_completed) > 1 and copy==False:
+            if backtests_completed and len(backtests_completed) > 1:
                 for backtest_completed in backtests_completed:
                     if backtest_completed._get_input_id() == backtest_input_id:
                         new = False
@@ -519,8 +539,9 @@ class BacktestCollection():
             if new:                    
                 backtest = backtest_class(backtest_input, datas=self._datas, mode=mode)
                 backtests_new.append(backtest)  
-                print(f'Added backtest {i+1} to backtests_new, mode: {mode}')
                 backtest_input_collection.clear_backtest_inputs()
+        
+        print(f'Added {i+1} backtests to backtests_new')
 
     def run_backtests(self):
         if len(self._backtests_new)==0:
@@ -632,8 +653,12 @@ class BacktestCollection():
             return summary_in_groups_sorted
         
         return summary_in_groups
-            
-    def copy_input_backtest(self, idx: tuple[int, int]):
+
+### rewrite method: 
+    # filtered_summary as input 
+    # deepcopy of parent input collection AND inputs but override attributes to be varied
+    
+    def copy_input_backtest(self, filtered_summary):
         backtest = self._backtests_completed[idx[0]]
         backtest_input =  copy.deepcopy(backtest.input_backtest)
         backtest_input.set_strategy_parameters(backtest.parameters[idx[1]]) # this makes shure only the parameters of the specific run are present
@@ -643,7 +668,7 @@ class BacktestCollection():
     
     def get_input_collection(self, input_collection_name):
         
-        input_collection = next((input_collection for input_collection in self.input_collections if input_collection.name == input_collection_name), None)
+        input_collection = next((input_collection for input_collection in self._backtest_input_collections if input_collection.name == input_collection_name), None)
         
         if input_collection:
             return input_collection
@@ -896,13 +921,7 @@ class BacktestCollection():
         
     
 
-    def _add_backtest_completed(self, backtest):
-        
-        backtest_parent_input_id = backtest.input_backtest._parent_input_id
-        if backtest_parent_input_id:
-            self._backtests_temp_map[backtest_parent_input_id] = (len(self._backtests_temp), 0)
-            self._backtests_temp.append(backtest)
-            return          
+    def _add_backtest_completed(self, backtest):   
         
         backtests_completed = self._backtests_completed
             

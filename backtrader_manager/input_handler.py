@@ -2,7 +2,6 @@ import os
 import time
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker  # Import the ticker module
 import matplotlib.dates as mdates
@@ -20,15 +19,18 @@ import copy
 from collections import OrderedDict
 
 from .utils import _format_parameters
-    
-# Manages input parameters and splitting parameters into smaller subsets
+from .backtests_handler import Backtest    
+
+
 class BacktestInputCollection:
    
     """
     A factory class for creating collections of backtest input configurations used in optimization or walk-forward testing.
 
     This class manages the setup for a consistent set of backtest runs:
+    - Aim is to ensure comparability of all backtest inputs created of an input collection
     - Shares the same time configuration (start/end timestamp, train/test window, walk-forward step).
+    - Share the same commission and slippage settings (True/False)
     - Shares the same data source and backtest execution logic of the BacktestCollection they are added to
     - Differentiates by backtest classes and specific strategy parameter combinations.
 
@@ -52,7 +54,6 @@ class BacktestInputCollection:
         - **Adjustable attributes** (can be modified via setter methods after instantiation):
             - `backtest_class`: The class used to run backtests.
             - `strategy_parameters`: Dictionary of strategy parameters for optimization (supports value ranges).
-            - `strategy_parameters_test`: Subset of strategy_parameters from training to be evaluated in test period
             - `max_chunk_size`: Defines how many runs are grouped together in one backtrader backtest when executed in chunks.
 
         - **Outputs** (populated later):
@@ -86,45 +87,36 @@ class BacktestInputCollection:
     
     def __init__(self, name, start_timestamp=None, end_timestamp=None, 
                  window: int = None, train_perc=0.7, backtest_class=None, strategy_parameters=None,
-                 commission=True, slippage=True, walkforward_step: int = None, max_warmup=None,):
+                 commission=True, slippage=True, walkforward_step: int = None, max_warmup=None):
 
-        # === Fixed attributes (only set at instantiation or once): Private, some with getters ===
-        
+        # === Fixed attributes: Private, some with getters ===
         self._name = name  # Descriptive name for the type of backtest sets e.g., 'WFO-backtests', 'Simple_Opt-backtests'
         self._datas = None  # is set once when instance is added to an backtest collection
-        self._id_to_param = {} 
-        self._alias_to_backtest_class = {}
-        self._max_warmup = max_warmup if max_warmup is not None else 0  # Indicator max warmup bars effect the earliest possible start timestamp 
+        self._id_to_param = {} # maps parameter_id to startegy parameter sets
+        self._alias_to_backtest_class = {} # maps the backtest class alias to the backtest object
         self._backtest_inputs_created = False # flags if backtest inputs have been created
-
-
-        # === Attributes adjustable only as long no backtest inputs have been created yet ===
         
+        # === Attributes adjustable as long no backtest inputs have been created yet ===
+        self._max_warmup = max_warmup if max_warmup is not None else 0  # Indicator max warmup bars effect the earliest possible start timestamp 
         self._train_perc = train_perc
         self._window = window  # Train + test window        
         self._walkforward_step = walkforward_step
-        # Recalculated as soon as datas is added to allign with available max. time period of data
-        self.earliest_start_timestamp = None
-        self.latest_end_timestamp = None
-        self._start_timestamp = start_timestamp
-        self._end_timestamp = end_timestamp
-        
+        self._start_timestamp = start_timestamp 
+        self._end_timestamp = end_timestamp 
         self._commission = commission
         self._slippage = slippage
 
-        
         # === Allways adjustable attributes: Public or with setters and getters ===
-        
-        self.backtest_class = backtest_class
+        self._backtest_class = backtest_class 
         self._strategy_parameters = _format_parameters(strategy_parameters or {}) 
         self.max_chunk_size = 1
 
-        # ===  Outputs (populated later):  ===
-        
+        # ===  Outputs  ===
+        self.earliest_start_timestamp = None
+        self.latest_end_timestamp = None
         self._train_test_periods = None # all timestamps, not bars
         self._backtest_inputs = []
-        
-        
+                
         print(f'Total parameter combinations: {self._count_combinations(self.strategy_parameters)}')
     
     # === Puplic methods ===
@@ -301,75 +293,126 @@ class BacktestInputCollection:
     
 
     
-    def create_backtest_inputs(self, train=True, max_chunk_size=None):
+    def create_backtest_inputs(self, backtest_class=None, strategy_parameters=None, period_keys=('train',), max_chunk_size=None):
         backtest_inputs = []
-    
+        runs = 0
+        if backtest_class: 
+            self.backtest_class = backtest_class
+        if strategy_parameters:
+            self.strategy_parameters = strategy_parameters
+        
         for iteration_key, periods in self.train_test_periods.items():
-            period_key = 'train' if train else 'test'
-            period = periods[period_key]
+            for period_key in period_keys:
+                period = periods[period_key]
+        
+                # Select strategy parameter sets
+                if period_key=='train':
+                    strategy_parameters_chunks = self._create_strategy_parameters_chunks(max_chunk_size)
+                if period_key=='test':
+                    strategy_parameters_chunks = [self._strategy_parameters][:] # create a shallow copy
     
-            # Select strategy parameter sets
-            if train:
-                strategy_parameters_chunks = self._create_strategy_parameters_chunks(max_chunk_size)
-            else:
-                strategy_parameters_chunks = self._strategy_parameters[:] # create a shallow copy
-    
-            # For each parameter chunk, create a BacktestInput
-            while strategy_parameters_chunks:
-                chunk = strategy_parameters_chunks.pop(0)  # Pop the first chunk
-                backtest_input = BacktestInput(
-                    self.name,
-                    period,
-                    iteration_key,
-                    period_key,
-                    chunk,
-                    backtest_class=self.backtest_class,
-                    commission=self.commission,
-                    slippage=self.slippage
-                )
-                backtest_inputs.append(backtest_input)
-    
+                # For each parameter chunk, create a BacktestInput
+                while strategy_parameters_chunks:
+                    chunk = strategy_parameters_chunks.pop(0)  # Pop the first chunk
+                    runs += self._count_combinations(chunk)
+                    backtest_input = BacktestInput(
+                        self.name,
+                        period,
+                        iteration_key,
+                        period_key,
+                        chunk,
+                        backtest_class=self.backtest_class,
+                        commission=self.commission,
+                        slippage=self.slippage
+                    )
+                    backtest_inputs.append(backtest_input)
+        
         self._backtest_inputs += backtest_inputs
         self._backtest_inputs_created = True
+        print(f'Created {len(backtest_inputs)} backtest input(s) with total of {runs} run(s)')
 
     def clear_backtest_inputs(self):
         self._backtest_inputs = []
 
-    def create_backtests_train_inputs(self, summary_filtered): 
-        backtests_train = {}              
-        if (summary_filtered['input_collection_name'] != self._name).any():
-            print('Only backtests belonging to this input collection are valid')
-            return   
-        parameter_ids = list(summary_filtered['parameter_id'])     
-            
-        for param_id in parameter_ids:
-            backtest_class = self._id_to_param[param_id][0]
-            parameters = self._id_to_param[param_id][1]
-            if backtest_class not in backtests_train:
-                backtests_train[backtest_class] = []
-            backtests_train[backtest_class].append(parameters)
-
-### future implementation: cluster parameter sets so that also train backtests with mutltible runs are posibble
+    def create_cloned_inputs(self, summary_filtered, period_keys=None): 
+        '''
+        Takes summary_filtered as input and creates new backtest inputs with the same parameter backtest class combinations.
+        The cloned inputs can be slightly altered by defining optional parameter: period_key,
+        It is also possible to create copies of backtests from other input collections.
         
-        for backtest_class, parameters in backtests_train.items():
-            self.backtest_class = backtest_class
-            self._strategy_parameters = parameters
-            self.create_backtest_inputs(train=False, max_chunk_size=None)
+        '''
+        
+        if (summary_filtered['input_collection_name'].nunique() > 1):
+            print('summary filtered must only contain backtests from the same input_collection')
+            return
+
+        backtests = {}  # backtests from summary_filtered to be copied
+                
+        for index, row in summary_filtered.iterrows():
+            parameter_id = row['parameter_id']
+            backtest_class_alias = row['backtest_class']
+            if not period_keys:
+                period_keys = (row['period_key'],)
+                
+            if backtest_class_alias not in backtests:
+                backtests[backtest_class_alias] = {}
+            if parameter_id not in backtests[backtest_class_alias].keys():
+                backtests[backtest_class_alias][parameter_id] = []
+            for period_key in period_keys:
+                if period_key not in backtests[backtest_class_alias][parameter_id]:         
+                    backtests[backtest_class_alias][parameter_id].append(period_key)
+
+### future implementation: rejoin parameter sets to ranges so that also train backtests with mutltible runs are posibble
+# maybe not possible, because of how backtrader combines parameter values
+        
+        for backtest_class_alias, param_period_keys in backtests.items():
+            self.backtest_class = backtest_class_alias
+            for parameter_id, period_keys in param_period_keys.items():
+                self.strategy_parameters = parameter_id
+                self.create_backtest_inputs(period_keys=period_keys, max_chunk_size=None)
     
+    def create_copy_self(self, name):
+        '''
+        Returns a deepcopy of the input_collection instance with many attributs the same, except for a few that are reset to default values as also defined
+        in __init__() 
+        Attributes with references to external objects will still point to the same place (deepcopy doesnt change that)
+        '''
+        copy_input_collection = copy.deepcopy(self)
+        copy_input_collection._name = name
+        copy_input_collection._backtest_inputs_created = False 
+        copy_input_collection._backtest_inputs = []
+        copy_input_collection._strategy_parameters = {}
+
+        return copy_input_collection
+
+    def maximise_window(self): 
+        self._window = self._get_bar(self._end_timestamp) - self._get_bar(self._start_timestamp)
+           
     # === Property getters/setters ===
+    @property
+    def backtest_class(self):
+        return self._backtest_class
+
+    @backtest_class.setter
+    def backtest_class(self, value):
+        if isinstance(value, str):
+            self._backtest_class = self._alias_to_backtest_class.get(value, None)
+        else:
+            self._backtest_class = value
+            
     
     @property
     def strategy_parameters(self) -> dict:
         return self._strategy_parameters
         
     @strategy_parameters.setter
-    def strategy_parameters(self, strategy_parameters: dict):
-        self._strategy_parameters = _format_parameters(strategy_parameters)
+    def strategy_parameters(self, value):
+        if isinstance(value, str):
+            self._strategy_parameters = self._id_to_param.get(value, None)[1]
+            self._backtest_class = self._id_to_param.get(value, None)[0]
+        else:   
+            self._strategy_parameters = _format_parameters(value)
 
-    @property
-    def strategy_parameters_test(self) -> dict:
-        return self._strategy_parameters_test
-    
     @property
     def name(self):
         return self._name
@@ -383,6 +426,7 @@ class BacktestInputCollection:
         return self._max_warmup
     
     error_message = 'This attribute can only be set before first backtest inputs have been created'
+    
     @max_warmup.setter
     def max_warmup(self, value):
         if not self._backtest_inputs_created:
@@ -476,12 +520,6 @@ class BacktestInputCollection:
             print(error_message)
             
     @property
-    def strategy_parameters_test(self):
-        if not self._strategy_parameters_test:
-            return
-        return [self._strategy_parameters_test.pop(0)]
-
-    @property
     def backtest_inputs(self):
         return self._backtest_inputs
         
@@ -492,8 +530,10 @@ class BacktestInputCollection:
         self.earliest_start_timestamp, self.latest_end_timestamp = self._calc_max_period()
         self._start_timestamp = max(self._start_timestamp, self.earliest_start_timestamp) if self._start_timestamp else self.earliest_start_timestamp
         self._end_timestamp = min(self._end_timestamp, self.latest_end_timestamp) if self._end_timestamp else self.latest_end_timestamp
+        if not self._window: # if no window size was defined:
+            self.maximise_window() #  window is maximised, leading to an optimisation with one single test/train period (no wfo)
         self.calc_train_test_periods()
-    
+            
     def _calc_max_period(self):
         """Calculates the earliest possible start date and latest possible end date based on available data."""
         start_dates, end_dates = [], []
@@ -503,7 +543,7 @@ class BacktestInputCollection:
             start_dates.append(data.index[self._max_warmup])
             end_dates.append(data.index[-1])
         return (max(start_dates) if start_dates else None, min(end_dates) if end_dates else None)
-
+            
     def _get_bar(self, timestamp, ticker=None):
         if not ticker:
             ticker = list(self._datas.keys())[0]
@@ -521,14 +561,9 @@ class BacktestInputCollection:
     def _create_strategy_parameters_chunks(self, max_chunk_size=None):
         self.max_chunk_size =  max_chunk_size
         parameters_chunks = self._split_parameters(self._strategy_parameters)
-            
-        print(
-            f'\nCreated {len(parameters_chunks)} strategy parameter chunk(s)', 
-            f'\nwith {self._count_combinations(parameters_chunks[0])} combinations per chunk')
         return parameters_chunks
     
     def _split_parameters(self, parameters):
-    
         # Sort parameters dictionary by the length of each list value in ascending order
         sorted_parameters = OrderedDict(sorted(parameters.items(), key=lambda item: len(item[1]) if isinstance(item[1], (list, tuple, set)) else 0))
         
@@ -547,7 +582,6 @@ class BacktestInputCollection:
                     parameters_chunk = copy.deepcopy(parameters_temp)
                     parameters_chunk[key_parameters] = [parameter]
                     parameters_chunks.append(parameters_chunk)
-                print(f'split on key "{key_parameters}"')
                 break
     
         if self._count_combinations(parameters_chunks[0]) > self.max_chunk_size:       
@@ -604,9 +638,6 @@ class BacktestInput:
         self.commission = commission
         self.slippage = slippage
         
-        # if the instance is a copy of a allready existing backtest run:
-        self._parent_path = None
-        self._parent_input_id = None 
     
     @property
     def input_id(self):
@@ -629,16 +660,8 @@ class BacktestInput:
     def set_strategy_parameters(self, strategy_parameters): 
         self.strategy_parameters = _format_parameters(strategy_parameters)
 
-    def _set_parent_path(self, parent_path):
-        self._parent_path = parent_path
-        
-    def _set_parent_input_id(self, parent_input_id: tuple[int, int]):
-        self._parent_input_id = parent_input_id
+    #def _get_class_backtest_run(self):
+    #    return self._class_backtest_run 
 
-    def _get_class_backtest_run(self):
-        return self._class_backtest_run 
-
-    def _get_parent_path(self):
-        return self._parent_path 
     
     
